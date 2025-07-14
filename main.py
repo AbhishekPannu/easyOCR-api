@@ -1,57 +1,64 @@
-# main.py
+# main.py (modified for Hugging Face)
 import io
 import os
 import easyocr
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse
+import gradio as gr # Import Gradio
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 # --- Configuration ---
-# Use an environment variable to set GPU usage, defaulting to False
 USE_GPU = os.getenv("USE_GPU", "False").lower() == "true"
-# Define the languages you want to support
 SUPPORTED_LANGUAGES = ['en']
 
-# --- FastAPI App Initialization ---
-app = FastAPI(
-    title="EasyOCR API",
-    description="Deployable OCR API using EasyOCR and FastAPI",
-    version="1.0.0",
-)
-
 # --- Model Loading ---
-# Load the model once when the application starts
 print(f"Loading EasyOCR reader for languages: {SUPPORTED_LANGUAGES} (GPU: {USE_GPU})")
 reader = easyocr.Reader(SUPPORTED_LANGUAGES, gpu=USE_GPU)
 print("EasyOCR reader loaded successfully.")
 
-# --- API Endpoints ---
-@app.get("/", tags=["General"])
-def read_root():
-    return {"message": "Welcome to the EasyOCR API! Navigate to /docs for documentation."}
+# --- Core OCR Function ---
+def ocr_and_draw(image_upload):
+    """
+    Performs OCR and returns the image with bounding boxes drawn on it.
+    """
+    # Convert Gradio's image (numpy array) to bytes for easyocr
+    image = Image.fromarray(image_upload)
+    
+    # Draw on a copy of the image
+    draw = ImageDraw.Draw(image)
+    
+    # Perform OCR
+    result = reader.readtext(np.array(image))
+    
+    extracted_text = []
+    for (bbox, text, prob) in result:
+        extracted_text.append(text)
+        
+        # Draw bounding box
+        top_left = tuple(bbox[0])
+        bottom_right = tuple(bbox[2])
+        draw.rectangle([top_left, bottom_right], outline="red", width=3)
+        
+        # You can also draw the text, but it can get messy
+        # draw.text(top_left, text, fill="red")
+        
+    return image, "\n".join(extracted_text)
 
-@app.post("/ocr", tags=["OCR"], response_description="OCR results")
-async def perform_ocr(file: UploadFile = File(...)):
-    """Performs OCR on an uploaded image."""
-    try:
-        contents = await file.read()
-        
-        # The 'detail=0' gives only text, 'detail=1' gives bounding boxes and confidence
-        result = reader.readtext(contents, detail=1)
-        
-        # Format the response
-        response_data = {
-            "filename": file.filename,
-            "extracted_text": [item[1] for item in result],
-            "full_result": [
-                {
-                    # Convert numpy types to standard Python types for JSON serialization
-                    "bounding_box": [list(map(int, point)) for point in item[0]],
-                    "text": item[1],
-                    "confidence": float(item[2])
-                }
-                for item in result
-            ]
-        }
-        return JSONResponse(content=response_data)
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+# --- Gradio Interface Definition ---
+description = "A simple web app to perform OCR on an uploaded image using EasyOCR. Upload an image to see the result."
+title = "EasyOCR Online"
+
+iface = gr.Interface(
+    fn=ocr_and_draw,
+    inputs=gr.Image(type="numpy", label="Upload Image"),
+    outputs=[
+        gr.Image(type="pil", label="Image with Bounding Boxes"),
+        gr.Textbox(label="Extracted Text")
+    ],
+    title=title,
+    description=description,
+    examples=[["./example.png"]] # You can add an example image to your repo
+)
+
+# --- Launch the App ---
+# When deploying on Spaces, it will run this automatically.
+iface.launch()
