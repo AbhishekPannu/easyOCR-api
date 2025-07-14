@@ -1,0 +1,6 @@
+# requirements.txt
+fastapi
+uvicorn[standard]
+python-multipart
+easyocr
+gunicorn  # Production-grade server
